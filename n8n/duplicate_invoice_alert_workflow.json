@@ -1,0 +1,244 @@
+{
+  "name": "AP Duplicate Invoice Detection Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "ScheduleTrigger",
+      "name": "Daily 9 AM Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO duplicate_invoice_alerts (duplicate_key, vendor_name, invoice_number, invoice_date, invoice_amount, duplicate_count, invoice_ids, total_duplicate_exposure, alert_status) WITH normalized_invoices AS ( SELECT invoice_id, UPPER(TRIM(vendor_name)) AS vendor_name_clean, UPPER(REPLACE(TRIM(invoice_number), ' ', '')) AS invoice_number_clean, invoice_date, ROUND(invoice_amount, 2) AS invoice_amount_clean, status, CONCAT(UPPER(TRIM(vendor_name)), '|', UPPER(REPLACE(TRIM(invoice_number), ' ', '')), '|', DATE_FORMAT(invoice_date, '%Y-%m-%d'), '|', ROUND(invoice_amount, 2)) AS duplicate_key FROM ap_invoices WHERE status NOT IN ('Cancelled', 'Rejected') ), duplicate_groups AS ( SELECT duplicate_key, vendor_name_clean, invoice_number_clean, invoice_date, invoice_amount_clean, COUNT(*) AS duplicate_count, GROUP_CONCAT(invoice_id ORDER BY invoice_id SEPARATOR ', ') AS invoice_ids, SUM(invoice_amount_clean) - MIN(invoice_amount_clean) AS potential_duplicate_exposure FROM normalized_invoices GROUP BY duplicate_key, vendor_name_clean, invoice_number_clean, invoice_date, invoice_amount_clean HAVING COUNT(*) > 1 ) SELECT duplicate_key, vendor_name_clean, invoice_number_clean, invoice_date, invoice_amount_clean, duplicate_count, invoice_ids, potential_duplicate_exposure, 'Open' FROM duplicate_groups dg WHERE NOT EXISTS ( SELECT 1 FROM duplicate_invoice_alerts a WHERE a.duplicate_key = dg.duplicate_key AND a.alert_status IN ('Open', 'In Review') );"
+      },
+      "id": "InsertDuplicateAlerts",
+      "name": "Run Duplicate Detection SQL",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        520,
+        300
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "MYSQL_CREDENTIAL_ID",
+          "name": "MySQL AP Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT alert_id, vendor_name, invoice_number, invoice_date, invoice_amount, duplicate_count, invoice_ids, total_duplicate_exposure, CASE WHEN total_duplicate_exposure >= 100000 THEN 'High Risk' WHEN total_duplicate_exposure >= 25000 THEN 'Medium Risk' ELSE 'Low Risk' END AS risk_category, created_at FROM duplicate_invoice_alerts WHERE alert_status = 'Open' ORDER BY total_duplicate_exposure DESC, created_at DESC;"
+      },
+      "id": "FetchOpenAlerts",
+      "name": "Fetch Open Duplicate Alerts",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "MYSQL_CREDENTIAL_ID",
+          "name": "MySQL AP Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $items().length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "IfDuplicatesFound",
+      "name": "Duplicates Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = items.map(item => item.json);\nconst totalExposure = rows.reduce((sum, r) => sum + Number(r.total_duplicate_exposure || 0), 0);\nconst tableRows = rows.map(r => `\n<tr>\n<td>${r.alert_id}</td>\n<td>${r.vendor_name}</td>\n<td>${r.invoice_number}</td>\n<td>${r.invoice_date}</td>\n<td>${Number(r.invoice_amount).toLocaleString('en-IN')}</td>\n<td>${r.duplicate_count}</td>\n<td>${r.invoice_ids}</td>\n<td>${Number(r.total_duplicate_exposure).toLocaleString('en-IN')}</td>\n<td>${r.risk_category}</td>\n</tr>`).join('');\n\nreturn [{\n  json: {\n    subject: `AP Duplicate Invoice Alert - ${rows.length} issue(s) found`,\n    body: `\n<h2>AP Duplicate Invoice Detection Alert</h2>\n<p>Duplicate invoice risk detected before payment processing.</p>\n<p><b>Total potential duplicate exposure:</b> INR ${totalExposure.toLocaleString('en-IN')}</p>\n<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">\n<thead>\n<tr>\n<th>Alert ID</th><th>Vendor</th><th>Invoice No</th><th>Invoice Date</th><th>Invoice Amount</th><th>Count</th><th>Invoice IDs</th><th>Exposure</th><th>Risk</th>\n</tr>\n</thead>\n<tbody>${tableRows}</tbody>\n</table>\n<p><b>Action Required:</b> Review invoice documents, block duplicate payment, and update alert status.</p>`\n  }\n}];"
+      },
+      "id": "BuildEmailBody",
+      "name": "Build Email Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ap-automation@company.com",
+        "toEmail": "ap-team@company.com",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "SendEmailAlert",
+      "name": "Send Email Alert to AP Team",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1640,
+        200
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP_CREDENTIAL_ID",
+          "name": "SMTP Email Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE duplicate_invoice_alerts SET alert_status = 'In Review' WHERE alert_status = 'Open';"
+      },
+      "id": "UpdateAlertStatus",
+      "name": "Mark Alerts as In Review",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1920,
+        200
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "MYSQL_CREDENTIAL_ID",
+          "name": "MySQL AP Database"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "NoDuplicates",
+      "name": "No Duplicate Alert Required",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 9 AM Schedule": {
+      "main": [
+        [
+          {
+            "node": "Run Duplicate Detection SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Duplicate Detection SQL": {
+      "main": [
+        [
+          {
+            "node": "Fetch Open Duplicate Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Open Duplicate Alerts": {
+      "main": [
+        [
+          {
+            "node": "Duplicates Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicates Found?": {
+      "main": [
+        [
+          {
+            "node": "Build Email Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Duplicate Alert Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Body": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert to AP Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert to AP Team": {
+      "main": [
+        [
+          {
+            "node": "Mark Alerts as In Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "github-template",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "Accounts Payable"
+    },
+    {
+      "name": "Finance Automation"
+    }
+  ]
+}

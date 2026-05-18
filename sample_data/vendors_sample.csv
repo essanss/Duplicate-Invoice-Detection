@@ -1,0 +1,16 @@
+vendor_id,vendor_name,gst_number,payment_terms_days,is_active
+V001,ABC Supplies,33ABCDE1234F1Z5,30,Yes
+V002,Global Tech Services,29AABCG8888L1Z2,30,Yes
+V003,Sunrise Logistics,27AAECS9999D1Z4,15,Yes
+V004,FinEdge Consulting,07AADCF2222R1Z8,30,Yes
+V005,NorthStar Office,33AADCN5555K1Z9,30,Yes
+V006,Metro Maintenance,33AADCM4444J1Z3,15,Yes
+V007,Prime Packaging,33AADCP7777B1Z6,30,Yes
+V008,BlueWave Utilities,33AADCB1111C1Z5,15,Yes
+V009,CloudNet India,33AADCC9999E1Z1,30,Yes
+V010,Sigma Stationery,33AADCS1234M1Z4,30,Yes
+V011,Rapid Courier,33AADCR5678N1Z7,15,Yes
+V012,Urban Facility Services,33AADCU2222P1Z0,15,Yes
+V013,Alpha Marketing,33AADCA8888Q1Z2,30,Yes
+V014,Bright Security,33AADCB4444S1Z9,15,Yes
+V015,Delta Hardware,33AADCD7777T1Z3,30,Yes
